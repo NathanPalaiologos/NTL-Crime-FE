@@ -1,4 +1,4 @@
-# Measuring Nighttime Luminosity's Effect on Crime: The Approach of Remote Sensoring
+# Measuring Nighttime Luminosity's Effect on Crime: The Approach Using Satellite Remote Sensoring Data
 
 ## 1. Setup
 
