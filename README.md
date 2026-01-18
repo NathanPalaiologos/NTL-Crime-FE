@@ -1,15 +1,37 @@
-# Measuring Nighttime Luminosity's Effect on Crime: The Approach Using Satellite Remote Sensoring Data
+## Illumi-Naughty
 
-## 1. Setup
+### Idea
 
-### 1.1. Status
+Use **exogenous moon phase** shocks to study how **nighttime light** relates to **crime**, and how the moonlight effect differs between **bright vs dark** counties.
 
-### 1.2. Goals and Scope
+### Data
 
-## 2. Data
+* **County-month crime** (2012–2021, rich breakdowns: property/violent, burglary/robbery/theft, weapon types, clearance).
+* **VNP46A3 monthly NTL** (Black Marble) aggregated to county-month + QA.
+* Main sample: **2013-01 to 2020-12** (2012 used to build baseline; 2021 as robustness).
 
-## 3. Repository Structure
+### Key variables
 
-## 4. References
+* `Y_ct`: asinh/log(1+crime) (primary: property & violent index).
+* `NTLBaseline_ct`: **previous-year mean NTL** for the county (predetermined exposure).
+* `Moon_t`: **astronomical moon illumination** (exogenous).
+* `MoonExp_ct = Moon_t × NightLength_ct` (night length from latitude+month; boosts spatial exposure, still exogenous).
+* `HQShare_ct`: satellite quality share (control + HQ-only robustness).
+* (Optional) NOAA **temp/precip** controls.
 
-- Kaplan, J. (Year). Concatenated Files: Uniform Crime Reporting Program Data: Offenses Known and Clearances by Arrest (Return A), 1960–2024 [Data set]. Princeton University. Date accessed: 2026/01/17. <https://www.openicpsr.org/openicpsr/project/100707/version/V22/view?path=/openicpsr/100707/fcr:versions/V22/offenses_known_csv_1960_2024_month.zip&type=file>.
+### Main regression (identification)
+
+County FE + year-month FE:
+[
+Y_{c,t} = \alpha_c + \delta_t + \theta ,(MoonExp_{c,t}\times NTLBaseline_{c,t}) + controls + \varepsilon_{c,t}
+]
+Interpretation:
+
+* `θ < 0`: artificial light substitutes for moonlight (moon matters less in bright places).
+* `θ > 0`: moonlight effects amplify with brightness (opportunity/nightlife channel).
+
+### Outputs
+
+* Main: property vs violent.
+* Heterogeneity: burglary/robbery/theft + weapon types.
+* Robustness: high reporting completeness, HQ-only, add weather, optional clear-sky check.
