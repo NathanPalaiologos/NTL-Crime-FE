@@ -22,9 +22,9 @@ Use **exogenous moon phase** shocks to study how **nighttime light** relates to 
 ### Main regression (identification)
 
 County FE + year-month FE:
-[
+$$
 Y_{c,t} = \alpha_c + \delta_t + \theta ,(MoonExp_{c,t}\times NTLBaseline_{c,t}) + controls + \varepsilon_{c,t}
-]
+$$
 Interpretation:
 
 * `θ < 0`: artificial light substitutes for moonlight (moon matters less in bright places).
@@ -35,3 +35,4 @@ Interpretation:
 * Main: property vs violent.
 * Heterogeneity: burglary/robbery/theft + weapon types.
 * Robustness: high reporting completeness, HQ-only, add weather, optional clear-sky check.
+
