@@ -2,18 +2,15 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 import os
-import glob
 import plotly.express as px
-
-# --- Page Config ---
 
 # Set page config
 st.set_page_config(page_title="Crime Data Dashboard", layout="wide")
 
 st.title("United States Crime Trends Dashboard")
 
-# Paths
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+# Paths - Relative to this file for deployment
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 METRIC_COLS = [
     'actual_murder', 
@@ -23,8 +20,7 @@ METRIC_COLS = [
     'actual_burglary_total', 
     'actual_theft_total', 
     'actual_motor_vehicle_theft_total', 
-    'actual_arson',
-    # 'actual_index_violent', 
+    'actual_arson', 
     'actual_index_violent',
     'actual_index_property',
     'actual_index_total'
@@ -34,8 +30,6 @@ MONTH_MAP = {
     'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
     'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
 }
-
-# --- Data Loading ---
 
 @st.cache_data
 def get_state_mapping():
@@ -71,104 +65,73 @@ def load_geo_data(state_fp):
 @st.cache_data
 def load_crime_data_long(state_abbr=None, national=False):
     """
-    Loads crime data.
-    If national=True, aggregates by STATE.
-    If state_abbr provided, filters by state and keeps AGENCY level detail.
+    Loads compressed Parquet data.
     """
-    crime_folder = os.path.join(DATA_DIR, "offenses_known_csv_1960_2024_month")
-    all_files = glob.glob(os.path.join(crime_folder, "*.csv"))
-    
-    dfs = []
-    
-    # Columns to load
-    # Basic IDs
-    id_cols = ['state_abb', 'year', 'month']
-    
-    if not national:
-        # We need detail columns for linking
-        id_cols += ['ori', 'agency_name', 'fips_state_code', 'fips_place_code', 'population']
-    
-    cols_to_seek = set(id_cols + METRIC_COLS)
-    
-    for f in all_files:
-        try:
-            # Check headers
-            header_row = pd.read_csv(f, nrows=0)
-            file_cols = header_row.columns.tolist()
-            available_cols = [c for c in file_cols if c in cols_to_seek]
-            
-            if 'state_abb' not in available_cols:
-                 continue
-
-            # Load data
-            temp = pd.read_csv(f, usecols=available_cols)
-            
-            if not national and state_abbr:
-                temp = temp[temp['state_abb'] == state_abbr]
-            
-            if not temp.empty:
-                if national:
-                    # Aggregate by state/year/month immediately
-                     for m in METRIC_COLS:
-                         if m in temp.columns:
-                             temp[m] = pd.to_numeric(temp[m], errors='coerce').fillna(0)
-                             
-                     agg_cols = [c for c in METRIC_COLS if c in temp.columns]
-                     temp = temp.groupby(['state_abb', 'year', 'month'])[agg_cols].sum().reset_index()
-                
-                dfs.append(temp)
-        except Exception as e:
-            continue
-            
-    if not dfs:
+    parquet_path = os.path.join(DATA_DIR, "crime_data_optimized.parquet")
+    if not os.path.exists(parquet_path):
+        st.error("Data file not found.")
         return pd.DataFrame()
-        
-    full_df = pd.concat(dfs, ignore_index=True)
-    
-    # Map months to numbers
-    # Ensure month column is string lower first
-    full_df['month_lower'] = full_df['month'].astype(str).str.lower()
-    full_df['month_num'] = full_df['month_lower'].map(MONTH_MAP)
-    
-    # Drop rows where month parse failed? Or keep as is?
-    # If month_num is NaN, we can't make a date. Filter them out.
-    full_df = full_df.dropna(subset=['month_num'])
-    full_df['month_num'] = full_df['month_num'].astype(int)
-    
-    # Create Date Column
-    full_df['month_str'] = full_df['month_num'].astype(str).str.zfill(2)
-    full_df['date'] = pd.to_datetime(full_df['year'].astype(str) + '-' + full_df['month_str'] + '-01', errors='coerce')
-    
-    # Creating GEOID for place-level matches
-    if not national:
-        # FIPS State (2) + FIPS Place (5)
-        full_df['fips_state_clean'] = pd.to_numeric(full_df['fips_state_code'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(2)
-        full_df['fips_place_clean'] = pd.to_numeric(full_df['fips_place_code'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(5)
-        full_df['GEOID'] = full_df['fips_state_clean'] + full_df['fips_place_clean']
-        
-        # Format strings
-        full_df['agency_name'] = full_df['agency_name'].str.title()
-    
-    # Melt
-    id_vars = ['year', 'month_num', 'date'] # Use month_num instead of raw string
-    if national:
-        id_vars += ['state_abb']
-    else:
-        id_vars += ['agency_name', 'state_abb', 'GEOID', 'population']
 
-    existing_metrics = [c for c in METRIC_COLS if c in full_df.columns]
-    
-    df_long = full_df.melt(
-        id_vars=id_vars,
-        value_vars=existing_metrics,
-        var_name='Crime Type', 
-        value_name='Incidents'
-    )
-    
-    # Clean up crime type names
-    df_long['Crime Type'] = df_long['Crime Type'].str.replace('actual_', '').str.replace('_', ' ').str.title()
-    
-    return df_long
+    try:
+        if national:
+            # Load full dataset for selected cols
+            # If parquet is partitioned, we can pushdown. Here we just read and group.
+            df = pd.read_parquet(parquet_path)
+            
+            # Helper to convert cols to numeric if needed (parquet preserves types usually)
+            cols = [c for c in METRIC_COLS if c in df.columns]
+            
+            # Aggregation
+            df = df.groupby(['state_abb', 'year', 'month'])[cols].sum().reset_index()
+            
+        else:
+            # Filter by state immediately
+            # pyarrow allows filtering on read which is memory efficient
+            filters = [('state_abb', '==', state_abbr)] if state_abbr else None
+            df = pd.read_parquet(parquet_path, filters=filters)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Pre-processing dates
+        df['month_lower'] = df['month'].astype(str).str.lower()
+        df['month_num'] = df['month_lower'].map(MONTH_MAP)
+        df = df.dropna(subset=['month_num'])
+        df['month_num'] = df['month_num'].astype(int)
+        
+        df['month_str'] = df['month_num'].astype(str).str.zfill(2)
+        df['date'] = pd.to_datetime(df['year'].astype(str) + '-' + df['month_str'] + '-01', errors='coerce')
+
+        if not national:
+            # GEOID Logic
+            df['fips_state_clean'] = pd.to_numeric(df['fips_state_code'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(2)
+            df['fips_place_clean'] = pd.to_numeric(df['fips_place_code'], errors='coerce').fillna(0).astype(int).astype(str).str.zfill(5)
+            df['GEOID'] = df['fips_state_clean'] + df['fips_place_clean']
+            df['agency_name'] = df['agency_name'].str.title()
+
+        # Melt
+        id_vars = ['year', 'month_num', 'date']
+        if national:
+            id_vars += ['state_abb']
+        else:
+            id_vars += ['agency_name', 'state_abb', 'GEOID', 'population']
+
+        existing_metrics = [c for c in METRIC_COLS if c in df.columns]
+        
+        df_long = df.melt(
+            id_vars=id_vars,
+            value_vars=existing_metrics,
+            var_name='Crime Type', 
+            value_name='Incidents'
+        )
+        
+        df_long['Crime Type'] = df_long['Crime Type'].str.replace('actual_', '').str.replace('_', ' ').str.title()
+        
+        return df_long
+        
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()
 
 # --- Main Logic ---
 
@@ -209,11 +172,10 @@ else:
     # National
     with st.spinner("Loading National Crime Data..."):
         df = load_crime_data_long(national=True)
-        # We need full state names for better visualization
+        # We need full state names for visualization
         state_map = get_state_mapping()
         if not state_map.empty:
              df = df.merge(state_map[['STATE_NAME', 'STUSPS']], left_on='state_abb', right_on='STUSPS', how='left')
-             # Renaming for clarity in Hover
              df.rename(columns={'STATE_NAME': 'State Name'}, inplace=True)
         else:
              df['State Name'] = df['state_abb']
@@ -259,7 +221,6 @@ with col_trend:
         title=f"Monthly Trends ({start_year}-{end_year})",
         labels={'date': 'Date', 'Incidents': 'Total Incidents'}
     )
-    # Ensure axes capitalized
     fig_trend.update_layout(xaxis_title="Date", yaxis_title="Total Incidents")
     st.plotly_chart(fig_trend, width="stretch")
 
@@ -280,32 +241,25 @@ st.subheader("Geospatial Distribution")
 
 map_metric = st.selectbox("Select Statistic for Map", ["Total Incidents", "Average Monthly Incidents"])
 map_agg_func = 'sum' if map_metric == "Total Incidents" else 'mean'
-
-# Explanation of metric
 st.caption(f"**Note:** '{map_metric}' represents the {map_metric.lower()} per location over the selected time period ({start_year}-{end_year}).")
 
 if analysis_level == "National Level":
     # National Map
-    # Group by State
     agg_dict = {'Incidents': map_agg_func}
     if 'State Name' in filtered_df.columns:
          agg_dict['State Name'] = 'first'
          
     map_df = filtered_df.groupby('state_abb').agg(agg_dict).reset_index()
     
-    hover_cols = {'Incidents': True, 'state_abb': True}
-    if 'State Name' in map_df.columns:
-        hover_name = 'State Name'
-    else:
-        hover_name = 'state_abb'
+    hover_name = 'State Name' if 'State Name' in map_df.columns else 'state_abb'
 
     fig_map = px.choropleth(
         map_df,
         locations='state_abb',
         locationmode="USA-states",
         color='Incidents',
-        hover_name=hover_name, # Full name in hover
-        hover_data=['state_abb'], # Add Code to hover too
+        hover_name=hover_name, 
+        hover_data=['state_abb'],
         scope="usa",
         color_continuous_scale="Reds",
         title=f"{map_metric} by State ({start_year}-{end_year})"
@@ -316,7 +270,6 @@ if analysis_level == "National Level":
 else:
     # State Map (Place Level)
     if gdf is not None and not gdf.empty:
-        # Aggregation by GEOID
         group_cols = ['GEOID']
         
         map_df = filtered_df.groupby(group_cols).agg(
@@ -325,13 +278,10 @@ else:
             Agency_Name=('agency_name', 'first')
         ).reset_index()
         
-        # Merge with Geo
         merged_gdf = gdf.merge(map_df, on='GEOID', how='left')
         merged_gdf['Incidents'] = merged_gdf['Incidents'].fillna(0)
-        
         merged_gdf['Population'] = merged_gdf['Population'].fillna(0).astype(int)
         
-        # Center map
         centroid = merged_gdf.geometry.centroid
         avg_lat = centroid.y.mean()
         avg_lon = centroid.x.mean()
@@ -342,7 +292,7 @@ else:
             locations=merged_gdf.index,
             color='Incidents',
             hover_name='NAME',
-            hover_data={'Agency_Name':True, 'Population': True}, # Population in hover
+            hover_data={'Agency_Name':True, 'Population': True},
             color_continuous_scale="Reds",
             mapbox_style="carto-positron",
             center={"lat": avg_lat, "lon": avg_lon},
