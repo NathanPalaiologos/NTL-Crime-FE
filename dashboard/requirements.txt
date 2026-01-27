@@ -3,4 +3,3 @@ pandas
 geopandas
 plotly
 pyarrow
-fastparquet
