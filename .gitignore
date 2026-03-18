@@ -1,3 +1,5 @@
 data/offenses_known_csv_1960_2024_month.zip
 data/tl_2025_us_county.zip
 .env
+data/offenses_known_csv_1960_2024_month/*.csv
+data/us_crime_data_2012_2024.parquet
